@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Soteria rules Stack
+
+ 
+
+Resources:
+
+  ComponentApi:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: api.yaml
+      Parameters:
+        StackName: !Sub "${AWS::StackName}"
+        ApiDomainName:
+          Fn::ImportValue:
+            !Join
+              - "-"
+              - - !Select [0, !Split ['-', !Ref AWS::StackName]]
+                - !Select [1, !Split ['-', !Ref AWS::StackName]]
+                - !Select [2, !Split ['-', !Ref AWS::StackName]]
+                - "api-domainName"
+
+        OpenApiBucket:
+            !Join
+              - '-'
+              - - !Select [0, !Split ['-', !Ref AWS::StackName]]
+                - !Select [1, !Split ['-', !Ref AWS::StackName]]
+                - !Select [2, !Split ['-', !Ref AWS::StackName]]
+                - 'api-openapi/rules'       
+
+Outputs:
+  rulesApi:
+    Value:
+      Fn::GetAtt: [ComponentApi, Outputs.rulesApi]
+    # Export:
+    #   Name: !Sub "${AWS::StackName}-api"
+

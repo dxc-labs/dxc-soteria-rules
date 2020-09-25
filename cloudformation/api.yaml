@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Checkpoint and Checkforbadgeissuance Rules
+
+Parameters:  
+
+  StackName:
+    Type: String
+  ApiDomainName:
+    Type: String
+    Description: Api DomainName
+  OpenApiBucket:
+    Type: String
+    Description: Name bucket which holds temp files
+    ConstraintDescription: Must contain only alphanumeric characters [a-zA-Z0-9].  
+
+Resources:
+
+  ApiGatewayLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:  
+              Service:
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+
+            
+
+      Policies:
+        - PolicyName: ApiGatewayLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt checkpointLambda.Arn
+                  - !GetAtt checkforbadgeissuance.Arn
+                  - !GetAtt daysleftforbadge.Arn
+
+  LambdaExecuteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                 - apigateway.amazonaws.com
+                 - lambda.amazonaws.com
+                 - edgelambda.amazonaws.com        
+            Action: sts:AssumeRole      
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        
+
+  checkpointLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Get Rule Definition
+      # FunctionName: !Sub "${ProjectName}-${TenantName}-${ComponentName}-checkpointLambda"
+      FunctionName: !Sub "${StackName}-checkpointLambda"
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt LambdaExecuteRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      CodeUri: ../packages/checkpointLambda
+
+  checkforbadgeissuance:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Get rules Definition
+      FunctionName: !Sub "${StackName}-checkforbadgeissuance"
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt LambdaExecuteRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      CodeUri: ../packages/checkforbadgeissuance
+
+  daysleftforbadge:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Get rules Definition
+      FunctionName: !Sub "${StackName}-daysleftforbadge"
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt LambdaExecuteRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      CodeUri: ../packages/daysleftforbadge
+
+  RulesApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${StackName}-api"
+      StageName: !Select [2, !Split ['-', !Ref AWS::StackName]]
+      DefinitionBody:
+        "Fn::Transform":
+          Name: "AWS::Include"
+          Parameters: 
+           Location: !Sub "s3://${OpenApiBucket}/rulesopenapi.yaml" 
+           #    Location: !Sub "s3://${ProjectName}-${TenantName}-${EnvironmentName}-api-openapi/rules/checkforbadgeissuance.yaml"  
+
+  ApiGatewayBasePathMapping:
+      Type: AWS::ApiGateway::BasePathMapping
+      Properties:
+        BasePath: !Select [3, !Split ['-', !Ref AWS::StackName]]
+        DomainName: !Sub "${ApiDomainName}"
+        RestApiId: !Ref RulesApi
+        Stage: !Ref RulesApi.Stage
+    
+
+  ApiKey:
+        Type: "AWS::ApiGateway::ApiKey"
+        DependsOn:
+            - RulesApi
+        Properties:
+            Name: !Sub "${StackName}-apikey"
+            Description: rulesApi API Key
+            Enabled: "true"
+            StageKeys:
+                - RestApiId: !Ref RulesApi
+                  StageName: !Ref RulesApi.Stage
+
+  usagePlan:
+        Type: "AWS::ApiGateway::UsagePlan"
+        Properties:
+            ApiStages:
+                - ApiId: !Ref RulesApi
+                  Stage: !Ref RulesApi.Stage
+            Description: RulesApi usage plan
+            Quota:
+                Limit: 5000
+                Period: MONTH
+            Throttle:
+                BurstLimit: 200
+                RateLimit: 100
+            UsagePlanName: !Sub "${StackName}-UsagePlan"
+
+  usagePlanKey:
+        Type: 'AWS::ApiGateway::UsagePlanKey'
+        DependsOn:
+            - RulesApi
+            - ApiKey
+        Properties:
+            KeyId: !Ref ApiKey
+            KeyType: API_KEY
+            UsagePlanId: !Ref usagePlan
+
+                               
+
+Outputs:   
+  rulesApi:
+      Value: !Join
+      - ''
+      - - 'https://'
+        - !Ref RulesApi
+        - .execute-api.
+        - !Ref 'AWS::Region'
+        - .
+        - !Ref 'AWS::URLSuffix'
+        - /
+        - !Select [2, !Split ['-', !Ref AWS::StackName]]
